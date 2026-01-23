@@ -1,0 +1,4 @@
+- [x] Add express.static for /uploads in server/vite.ts for development
+- [x] Import express in server/vite.ts
+- [x] Fix avatar src in Gallery.tsx dialog by removing /server/
+- [ ] Test the changes by running the application

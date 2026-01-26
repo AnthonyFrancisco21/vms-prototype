@@ -160,6 +160,46 @@ export const insertSettingSchema = createInsertSchema(settings).omit({
 export type InsertSetting = z.infer<typeof insertSettingSchema>;
 export type Setting = typeof settings.$inferSelect;
 
+// Employees table - separate from visitors
+export const employees = pgTable("employees", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  idScanImage: text("id_scan_image"),
+  photoImage: text("photo_image"),
+  rfid: text("rfid"), // RFID number
+  entryTime: timestamp("entry_time"),
+  exitTime: timestamp("exit_time"),
+  status: text("status").notNull().default("registered"),
+});
+
+export const insertEmployeeSchema = createInsertSchema(employees).omit({
+  id: true,
+});
+
+export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
+export type Employee = typeof employees.$inferSelect;
+
+// Guest passes table
+export const guestPasses = pgTable("guest_passes", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  passNumber: text("pass_number").notNull().unique(),
+  qrCode: text("qr_code").notNull(),
+  isAvailable: boolean("is_available").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertGuestPassSchema = createInsertSchema(guestPasses).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertGuestPass = z.infer<typeof insertGuestPassSchema>;
+export type GuestPass = typeof guestPasses.$inferSelect;
+
 // Purpose options (predefined)
 export const visitPurposes = [
   "Guest",

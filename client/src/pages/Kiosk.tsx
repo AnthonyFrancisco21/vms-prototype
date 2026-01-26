@@ -1,362 +1,422 @@
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Visitor } from "@shared/schema";
+import type { Visitor, Employee } from "@shared/schema";
 import {
-  Monitor,
-  CheckCircle2,
   User,
-  CreditCard,
-  LogIn,
-  LogOut,
-  Building2,
+  Clock,
+  QrCode,
+  MapPin,
+  CheckCircle2,
+  ArrowRightLeft, // Changed icon to represent In/Out
+  CloudSun,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+
+// Types
+type KioskPerson = (Visitor | Employee) & {
+  personType: "visitor" | "employee";
+};
+
+type DisplayState = {
+  status: "idle" | "processing" | "success" | "error";
+  person?: KioskPerson | null;
+  message?: string;
+  timestamp?: Date;
+  isCheckOut?: boolean;
+};
 
 export default function Kiosk() {
   const { toast } = useToast();
-  const [processedVisitor, setProcessedVisitor] = useState<Visitor | null>(
-    null,
-  );
-  const [scannedVisitor, setScannedVisitor] = useState<Visitor | null>(null);
+
+  // State
+  const [viewState, setViewState] = useState<DisplayState>({ status: "idle" });
   const [rfidInput, setRfidInput] = useState("");
-  const [isScanning, setIsScanning] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   // Refs
   const rfidInputRef = useRef<HTMLInputElement>(null);
   const rfidTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const resetScreenTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Get building settings for branding
+  // Get building settings
   const { data: settings } = useQuery<{ key: string; value: string }[]>({
     queryKey: ["/api/settings"],
   });
 
   const buildingName =
-    settings?.find((s) => s.key === "building_name")?.value ||
-    "Visitor Management System";
+    settings?.find((s) => s.key === "building_name")?.value || "SG Webworks";
+
+  // Clock update (Every second)
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Auto-focus RFID input
   useEffect(() => {
-    if (!scannedVisitor && !processedVisitor) {
-      setTimeout(() => {
-        if (rfidInputRef.current) {
-          rfidInputRef.current.focus();
-        }
-      }, 100);
-    }
-  }, [scannedVisitor, processedVisitor]);
-
-  const scanMutation = useMutation({
-    mutationFn: async (rfid: string) => {
-      // CHANGE: Added specific error handling for 404 to prevent generic errors
-      const res = await apiRequest("GET", `/api/visitors/rfid/${rfid}`);
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || "Scan failed");
-      }
-      return res.json();
-    },
-    onSuccess: (visitor: Visitor) => {
-      setScannedVisitor(visitor);
-      setRfidInput("");
-      setIsScanning(false);
-    },
-    onError: (error: Error) => {
-      // CHANGE: Specific handling to ensure we don't alert "Scan Failed" on legitimate 404s
-      const isNotFound = error.message.toLowerCase().includes("not found");
-
-      toast({
-        title: isNotFound ? "Card Not Recognized" : "Scan Failed",
-        description: isNotFound
-          ? "This RFID card is not registered."
-          : "Unable to scan the card. Please try again.",
-        variant: "destructive",
-      });
-
-      setRfidInput("");
-      setIsScanning(false);
-
+    const focusInterval = setInterval(() => {
       if (rfidInputRef.current) {
         rfidInputRef.current.focus();
       }
-    },
-  });
+    }, 1000);
+    return () => clearInterval(focusInterval);
+  }, []);
+
+  // Reset Screen Logic
+  const scheduleReset = () => {
+    if (resetScreenTimeoutRef.current)
+      clearTimeout(resetScreenTimeoutRef.current);
+
+    resetScreenTimeoutRef.current = setTimeout(() => {
+      setViewState({ status: "idle" });
+    }, 4000);
+  };
+
+  // --- MUTATIONS ---
 
   const processMutation = useMutation({
     mutationFn: async (rfid: string) => {
       const res = await apiRequest("POST", "/api/visitors/kiosk", { rfid });
       return res.json();
     },
-    onSuccess: (visitor: Visitor) => {
-      setProcessedVisitor(visitor);
-      setScannedVisitor(null);
-      const isCheckOut = visitor.exitTime !== null;
-      toast({
-        title: isCheckOut ? "Check-Out Successful" : "Check-In Successful",
-        description: `Visitor ${visitor.name} has been ${isCheckOut ? "checked out" : "checked in"}.`,
+    onSuccess: (person: Visitor | Employee) => {
+      const isCheckOut = !!person.exitTime;
+      const personType = "registrationType" in person ? "visitor" : "employee";
+
+      setViewState({
+        status: "success",
+        person: { ...person, personType } as KioskPerson,
+        timestamp: new Date(),
+        isCheckOut: isCheckOut,
+        message: isCheckOut
+          ? "Goodbye, see you soon."
+          : "Welcome, access granted.",
       });
+
       queryClient.invalidateQueries({ queryKey: ["/api/visitors"] });
+      scheduleReset();
     },
     onError: (error: Error) => {
-      toast({
-        title: "Process Failed",
-        description: error.message,
-        variant: "destructive",
+      setViewState({
+        status: "error",
+        message: error.message || "Processing Failed",
       });
-      setScannedVisitor(null);
-      if (rfidInputRef.current) {
-        rfidInputRef.current.focus();
-      }
+      scheduleReset();
     },
   });
 
-  // CHANGE: Centralized scan trigger to avoid code duplication
+  const scanMutation = useMutation({
+    mutationFn: async (rfid: string) => {
+      // 1. Try Visitor
+      try {
+        const res = await apiRequest("GET", `/api/visitors/rfid/${rfid}`);
+        if (res.ok) return { ...(await res.json()), personType: "visitor" };
+      } catch (e) {}
+
+      // 2. Try Employee
+      try {
+        const res = await apiRequest("GET", `/api/employees/rfid/${rfid}`);
+        if (res.ok) return { ...(await res.json()), personType: "employee" };
+      } catch (e) {}
+
+      throw new Error("Card not recognized");
+    },
+    onSuccess: (person: KioskPerson) => {
+      // Auto-process without confirmation
+      setViewState({ status: "processing", person: person });
+      if (person.rfid) {
+        processMutation.mutate(person.rfid);
+      } else {
+        setViewState({
+          status: "error",
+          message: "Invalid RFID data.",
+        });
+        scheduleReset();
+      }
+    },
+    onError: () => {
+      setViewState({
+        status: "error",
+        message: "Card not registered in system.",
+      });
+      scheduleReset();
+    },
+  });
+
+  // --- INPUT HANDLING ---
+
   const triggerScan = (value: string) => {
-    if (value.trim().length >= 3 && !isScanning && !scanMutation.isPending) {
-      setIsScanning(true);
+    if (value.trim().length >= 3) {
+      if (resetScreenTimeoutRef.current)
+        clearTimeout(resetScreenTimeoutRef.current);
+
+      setViewState({ status: "processing" });
       scanMutation.mutate(value.trim());
     }
+    setRfidInput("");
   };
 
   const handleRfidInput = (value: string) => {
     setRfidInput(value);
+    if (rfidTimeoutRef.current) clearTimeout(rfidTimeoutRef.current);
 
-    // Clear existing timeout
-    if (rfidTimeoutRef.current) {
-      clearTimeout(rfidTimeoutRef.current);
-    }
-
-    // Debounce for manual typing
     if (value.trim().length > 0) {
-      rfidTimeoutRef.current = setTimeout(() => {
-        triggerScan(value);
-      }, 500);
+      rfidTimeoutRef.current = setTimeout(() => triggerScan(value), 300);
     }
   };
 
-  // CHANGE: The critical fix is in this useEffect
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && rfidInput.trim() !== "") {
-        e.preventDefault();
-
-        // CRITICAL FIX: Kill the debounce timer immediately!
-        // This prevents the double-fetch when scanner hits Enter.
-        if (rfidTimeoutRef.current) {
-          clearTimeout(rfidTimeoutRef.current);
-        }
-
-        triggerScan(rfidInput);
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [rfidInput, isScanning, scanMutation.isPending]); // Dependencies are important
-
-  const handleConfirmProcess = () => {
-    if (scannedVisitor && scannedVisitor.rfid) {
-      processMutation.mutate(scannedVisitor.rfid);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && rfidInput.trim() !== "") {
+      e.preventDefault();
+      if (rfidTimeoutRef.current) clearTimeout(rfidTimeoutRef.current);
+      triggerScan(rfidInput);
     }
   };
 
-  const handleCancelScan = () => {
-    setScannedVisitor(null);
-    setRfidInput("");
-    if (rfidInputRef.current) {
-      rfidInputRef.current.focus();
-    }
+  // Helper to format dates cleanly
+  const formatTime = (dateStr?: string | Date | null) => {
+    if (!dateStr) return "--:--:--";
+    return new Date(dateStr).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   };
-
-  const resetKiosk = () => {
-    setProcessedVisitor(null);
-    setScannedVisitor(null);
-    setRfidInput("");
-    if (rfidInputRef.current) {
-      rfidInputRef.current.focus();
-    }
-  };
-
-  // --- RENDER LOGIC (Kept same as your original, just summarized for brevity) ---
-
-  if (scannedVisitor) {
-    const willCheckIn = !scannedVisitor.entryTime;
-    const willCheckOut = scannedVisitor.entryTime && !scannedVisitor.exitTime;
-
-    return (
-      <div className="h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex flex-col">
-        <div className="flex-shrink-0 text-center pt-8 pb-4">
-          <div className="flex items-center justify-center gap-3 mb-2">
-            <Building2 className="h-10 w-10 text-primary" />
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-              {buildingName}
-            </h1>
-          </div>
-          <p className="text-lg text-gray-600 dark:text-gray-300">
-            Visitor Kiosk
-          </p>
-        </div>
-
-        <div className="flex-1 flex items-center justify-center px-6">
-          <div className="w-full max-w-2xl">
-            <Card className="border-2 border-primary/20 shadow-2xl bg-white/95 dark:bg-gray-800/95 backdrop-blur">
-              <CardHeader className="text-center pb-4">
-                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                  <User className="h-8 w-8 text-primary" />
-                </div>
-                <CardTitle className="text-2xl">Visitor Identified</CardTitle>
-                <p className="text-muted-foreground">
-                  Please confirm to {willCheckIn ? "check in" : "check out"}
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">Name</p>
-                    <p className="font-semibold text-lg">
-                      {scannedVisitor.name}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">RFID</p>
-                    <p className="font-mono font-semibold text-lg">
-                      {scannedVisitor.rfid}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-6 bg-primary/5 rounded-lg border-2 border-primary/20">
-                  <div className="flex items-center justify-center gap-3 mb-2">
-                    {willCheckIn ? (
-                      <LogIn className="h-6 w-6 text-green-600" />
-                    ) : (
-                      <LogOut className="h-6 w-6 text-blue-600" />
-                    )}
-                    <h3 className="text-xl font-semibold">
-                      {willCheckIn ? "Check-In" : "Check-Out"}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <Button
-                    variant="outline"
-                    onClick={handleCancelScan}
-                    className="flex-1 h-14 text-lg"
-                    disabled={processMutation.isPending}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleConfirmProcess}
-                    className="flex-1 h-14 text-lg"
-                    disabled={processMutation.isPending}
-                  >
-                    {processMutation.isPending ? "Processing..." : "Confirm"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (processedVisitor) {
-    const isCheckOut = processedVisitor.exitTime !== null;
-    return (
-      <div className="h-screen bg-gradient-to-br from-green-50 to-emerald-100 dark:from-gray-900 dark:to-gray-800 flex flex-col">
-        <div className="flex-1 flex items-center justify-center px-6">
-          <Card className="border-2 border-green-200 shadow-2xl bg-white/95 dark:bg-gray-800/95 backdrop-blur w-full max-w-2xl">
-            <CardContent className="p-8 text-center">
-              <div className="w-20 h-20 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-6">
-                <CheckCircle2 className="h-10 w-10 text-green-600" />
-              </div>
-              <h2 className="text-3xl font-bold mb-4 text-green-800">
-                {isCheckOut ? "Check-Out Complete" : "Check-In Complete"}
-              </h2>
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-6 mb-8">
-                <p className="font-semibold text-lg">{processedVisitor.name}</p>
-                <p className="text-muted-foreground">
-                  {isCheckOut ? "Checked Out at" : "Checked In at"}{" "}
-                  {new Date().toLocaleTimeString()}
-                </p>
-              </div>
-              <Button
-                onClick={resetKiosk}
-                size="lg"
-                className="w-full h-14 text-lg"
-              >
-                Ready for Next Visitor
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex flex-col overflow-hidden">
-      <div className="flex-shrink-0 text-center pt-12 pb-8">
-        <div className="flex items-center justify-center gap-4 mb-6">
-          <Building2 className="h-16 w-16 text-primary" />
-          <div>
-            <h1 className="text-5xl font-bold text-gray-900 dark:text-white mb-2">
-              {buildingName}
+    // CHANGED: Overall Container - Dark Theme #111111 (zinc-950)
+    <div className="h-screen w-full bg-[#0a0a0a] text-white flex items-center justify-center relative overflow-hidden font-sans selection:bg-blue-500/30">
+      {/* CHANGED: Background Ambient Blue Glow (Matches new logo color) */}
+      <div
+        className="absolute right-[-10%] top-[10%] w-[80vh] h-[80vh] rounded-full border-[60px] border-blue-900/20 blur-sm animate-spin-slow pointer-events-none"
+        style={{ animationDuration: "60s" }}
+      ></div>
+      <div className="absolute right-[-5%] top-[15%] w-[60vh] h-[60vh] rounded-full border-[40px] border-blue-800/10 blur-md pointer-events-none"></div>
+      <div className="absolute right-[0%] top-[25%] w-[40vh] h-[40vh] rounded-full border-[20px] border-blue-600/5 blur-xl pointer-events-none"></div>
+
+      {/* Hidden Input for RFID Reader */}
+      <Input
+        ref={rfidInputRef}
+        value={rfidInput}
+        onChange={(e) => handleRfidInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className="absolute opacity-0 pointer-events-none w-0 h-0"
+        autoComplete="off"
+        autoFocus
+      />
+
+      {/* CHANGED: Main Content Container */}
+      <div className="w-full max-w-6xl h-[85vh] bg-[#111] rounded-[1rem] shadow-2xl flex flex-col relative overflow-hidden border border-white/5">
+        {/* Header Bar */}
+        <div className="flex justify-between items-start px-12 py-10 z-10">
+          {/* Time & Weather Section */}
+          <div className="flex flex-col gap-1">
+            <h1 className="text-6xl font-light tracking-tight text-white/90 tabular-nums">
+              {/* CHANGED: Added seconds to time display */}
+              {currentTime.toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              })}
             </h1>
-            <p className="text-2xl text-gray-600 dark:text-gray-300">
-              Visitor Kiosk
-            </p>
+            <div className="flex items-center gap-4 text-zinc-500 font-medium ml-1 mt-2">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-blue-500" />
+                <span>Makati, Metro Manila</span>
+              </div>
+              <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
+              <div className="flex items-center gap-2">
+                <CloudSun className="w-4 h-4 text-yellow-500/80" />
+                <span>28°C</span>
+              </div>
+            </div>
+            <span className="text-zinc-600 font-medium ml-1 text-sm uppercase tracking-widest mt-1">
+              {currentTime.toLocaleDateString([], {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </span>
+          </div>
+
+          {/* CHANGED: Logo Right - Using Image + Name */}
+          <div className="flex flex-col items-end gap-3">
+            {/* Replaced generic div with image. Ensure 'favicon.png.jpeg' is accessible in your public folder or adjust path */}
+            <div className="w-16 h-16 rounded-xl overflow-hidden bg-white/5 border border-white/10 p-1">
+              {/* Note: Update the src below to the exact path where you stored the uploaded image */}
+              <img
+                src="/favicon.png"
+                alt="Logo"
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <span className="text-lg font-thin tracking-wide text-zinc-400">
+              {buildingName}
+            </span>
           </div>
         </div>
-      </div>
 
-      <div className="flex-1 flex items-center justify-center px-6">
-        <div className="w-full max-w-2xl">
-          <Card className="border-4 border-primary/30 shadow-2xl bg-white/95 dark:bg-gray-800/95 backdrop-blur h-full max-h-[500px]">
-            <CardContent className="p-8 h-full flex flex-col justify-center">
-              <div className="text-center mb-8">
-                <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
-                  <CreditCard className="h-12 w-12 text-primary" />
+        {/* Dynamic Content Area */}
+        <div className="flex-1 flex flex-col justify-center px-12 pb-12 z-10 transition-all duration-500 ease-in-out">
+          {/* STATE: IDLE */}
+          {viewState.status === "idle" && (
+            <div className="animate-in fade-in slide-in-from-left-4 duration-500 space-y-10 max-w-xl">
+              <div className="space-y-4">
+                <p className="text-zinc-400 text-2xl font-light">Welcome To</p>
+                <h2 className="text-7xl font-thin text-white tracking-tight">
+                  SG Webworks<span className="text-blue-600">.</span>
+                </h2>
+              </div>
+
+              {/* CHANGED: Combined Check-in/out Pill */}
+              <div className="h-20 w-64 rounded-full border border-zinc-700 bg-zinc-800/30 backdrop-blur-sm flex items-center justify-between px-3 pl-8 shadow-inner">
+                <span className="text-zinc-300 font-medium text-lg">
+                  Check-In / Out
+                </span>
+                <div className="h-14 w-14 rounded-full bg-blue-600 shadow-lg shadow-blue-900/50 flex items-center justify-center animate-pulse">
+                  <ArrowRightLeft className="text-white w-6 h-6" />
                 </div>
-                <h2 className="text-3xl font-bold mb-4">Tap RFID Card</h2>
-                <p className="text-lg text-muted-foreground mb-8">
-                  Place your RFID card on the reader
+              </div>
+
+              <div className="pt-4 flex items-center gap-4 opacity-40">
+                <QrCode className="w-6 h-6 text-zinc-500" />
+                <p className="text-sm text-zinc-500 uppercase tracking-wider">
+                  Tap Card or Scan QR Code
                 </p>
               </div>
+            </div>
+          )}
 
-              <div className="max-w-md mx-auto mb-8">
-                <Input
-                  ref={rfidInputRef}
-                  type="text"
-                  value={rfidInput}
-                  onChange={(e) => handleRfidInput(e.target.value)}
-                  className="h-16 text-center text-2xl font-mono border-4 border-dashed border-primary/50 focus:border-primary bg-primary/5"
-                  placeholder="Scanning..."
-                  autoComplete="off"
-                  // Keep opacity 0 but make it clickable/selectable just in case
-                  style={{
-                    opacity: 0,
-                    position: "absolute",
-                    pointerEvents: "none",
-                  }}
-                />
-              </div>
+          {/* STATE: PROCESSING */}
+          {viewState.status === "processing" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-50">
+              <div className="w-20 h-20 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mb-6"></div>
+              <p className="text-2xl text-zinc-300 font-light tracking-wide">
+                Verifying Access...
+              </p>
+            </div>
+          )}
 
-              {scanMutation.isPending && (
-                <div className="text-center">
-                  <span className="text-lg font-medium animate-pulse">
-                    Scanning RFID...
-                  </span>
+          {/* STATE: SUCCESS (The result card) */}
+          {viewState.status === "success" && viewState.person && (
+            <div className="w-full flex items-center justify-center animate-in zoom-in-95 duration-300">
+              <Card className="w-full max-w-4xl bg-[#1a1a1a] border-none shadow-2xl relative overflow-hidden rounded-[2.5rem]">
+                {/* Blue/Orange accent strip based on action */}
+                <div
+                  className={`absolute top-0 left-0 w-3 h-full ${
+                    viewState.isCheckOut ? "bg-orange-500" : "bg-blue-600"
+                  }`}
+                ></div>
+
+                <CardContent className="p-12 flex items-center gap-12">
+                  {/* Avatar / Image */}
+                  <div className="relative">
+                    <div className="w-48 h-48 rounded-full overflow-hidden border-8 border-[#252525] shadow-2xl bg-zinc-800 flex items-center justify-center">
+                      <User className="w-24 h-24 text-zinc-600" />
+                    </div>
+                    {/* Status Badge */}
+                    <div
+                      className={`absolute bottom-2 right-2 p-4 rounded-full border-8 border-[#1a1a1a] ${
+                        viewState.isCheckOut ? "bg-orange-500" : "bg-blue-600"
+                      }`}
+                    >
+                      {viewState.isCheckOut ? (
+                        <ArrowRightLeft className="w-8 h-8 text-white" />
+                      ) : (
+                        <CheckCircle2 className="w-8 h-8 text-white" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 space-y-6">
+                    <div>
+                      <h3 className="text-zinc-500 text-sm font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                        {viewState.person.personType}
+                      </h3>
+                      <h2 className="text-5xl font-bold text-white mb-2 tracking-tight">
+                        {viewState.person.name}
+                      </h2>
+                      <p
+                        className={`text-2xl font-medium ${
+                          viewState.isCheckOut
+                            ? "text-orange-400"
+                            : "text-blue-400"
+                        }`}
+                      >
+                        {viewState.message}
+                      </p>
+                    </div>
+
+                    {/* Time Grid */}
+                    <div className="grid grid-cols-2 gap-6 mt-8 bg-[#111] p-6 rounded-2xl border border-white/5">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
+                          Time In
+                        </span>
+                        <span className="text-2xl font-mono text-white tracking-tight">
+                          {formatTime(viewState.person.entryTime || new Date())}
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1 border-l border-white/5 pl-6">
+                        <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
+                          Time Out
+                        </span>
+                        <span
+                          className={`text-2xl font-mono ${
+                            viewState.isCheckOut
+                              ? "text-white"
+                              : "text-zinc-700"
+                          }`}
+                        >
+                          {viewState.isCheckOut
+                            ? formatTime(new Date())
+                            : "--:--:--"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* STATE: ERROR */}
+          {viewState.status === "error" && (
+            <div className="w-full flex items-center justify-center animate-in shake duration-300">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-3xl p-10 text-center max-w-lg backdrop-blur-md">
+                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <User className="w-8 h-8 text-red-500" />
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <h2 className="text-3xl font-bold text-red-400 mb-2">
+                  Access Denied
+                </h2>
+                <p className="text-xl text-zinc-300 font-light">
+                  {viewState.message}
+                </p>
+                <div className="mt-8 pt-6 border-t border-red-500/10">
+                  <p className="text-sm text-zinc-500 uppercase tracking-widest">
+                    Please contact security
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer - Simplified based on request */}
+        <div className="px-12 py-8 flex justify-center items-center border-t border-white/5 bg-[#151515]">
+          <p className="text-xs text-zinc-600 tracking-widest uppercase">
+            Powered by{" "}
+            <span className="text-zinc-400 font-bold ml-1">{buildingName}</span>{" "}
+            • Secure Access System
+          </p>
         </div>
       </div>
     </div>

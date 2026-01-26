@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +91,11 @@ export default function Gallery() {
   });
 
   const filteredVisitors = visitors.filter((visitor) => {
+    // Only show visitors (registrationType should be "visitor")
+    if (visitor.registrationType !== "visitor") {
+      return false;
+    }
+
     const matchesSearch =
       visitor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (visitor.personToVisit
@@ -91,7 +104,9 @@ export default function Gallery() {
         false) ||
       visitor.destinationName
         ?.toLowerCase()
-        .includes(searchQuery.toLowerCase());
+        .includes(searchQuery.toLowerCase()) ||
+      visitor.rfid?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      visitor.passNumber?.toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesStatus =
       statusFilter === "all" || visitor.status === statusFilter;
@@ -207,15 +222,44 @@ export default function Gallery() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                  <div key={i} className="p-4 bg-muted rounded-lg">
-                    <Skeleton className="h-24 w-24 rounded-full mx-auto mb-3" />
-                    <Skeleton className="h-4 w-24 mx-auto mb-2" />
-                    <Skeleton className="h-3 w-20 mx-auto" />
-                  </div>
-                ))}
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Avatar</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Destination</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Entry Time</TableHead>
+                    <TableHead>Exit Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <TableRow key={i}>
+                      <TableCell>
+                        <Skeleton className="h-10 w-10 rounded-full" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-24" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-20" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-6 w-16" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-20 mb-1" />
+                        <Skeleton className="h-3 w-16" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-20 mb-1" />
+                        <Skeleton className="h-3 w-16" />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             ) : filteredVisitors.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <Image className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -227,38 +271,76 @@ export default function Gallery() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {filteredVisitors.map((visitor) => (
-                  <div
-                    key={visitor.id}
-                    className="p-4 bg-muted rounded-lg text-center cursor-pointer hover-elevate transition-transform"
-                    onClick={() => setSelectedVisitor(visitor)}
-                    data-testid={`visitor-card-${visitor.id}`}
-                  >
-                    <Avatar className="h-20 w-20 mx-auto mb-3">
-                      {visitor.photoImage ? (
-                        <AvatarImage
-                          src={`${window.location.origin}${visitor.photoImage}`}
-                          alt={visitor.name}
-                        />
-                      ) : null}
-                      <AvatarFallback className="text-xl">
-                        {getInitials(visitor.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <p
-                      className="font-medium truncate"
-                      data-testid="text-visitor-name"
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Avatar</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Destination</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Entry Time</TableHead>
+                    <TableHead>Exit Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredVisitors.map((visitor) => (
+                    <TableRow
+                      key={visitor.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => setSelectedVisitor(visitor)}
+                      data-testid={`visitor-row-${visitor.id}`}
                     >
-                      {visitor.name}
-                    </p>
-                    <p className="text-sm text-muted-foreground truncate">
-                      {visitor.destinationName}
-                    </p>
-                    <div className="mt-2">{getStatusBadge(visitor.status)}</div>
-                  </div>
-                ))}
-              </div>
+                      <TableCell>
+                        <Avatar className="h-10 w-10">
+                          {visitor.photoImage ? (
+                            <AvatarImage
+                              src={`${window.location.origin}${visitor.photoImage}`}
+                              alt={visitor.name}
+                            />
+                          ) : null}
+                          <AvatarFallback>
+                            {getInitials(visitor.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                      </TableCell>
+                      <TableCell
+                        className="font-medium"
+                        data-testid="text-visitor-name"
+                      >
+                        {visitor.name}
+                      </TableCell>
+                      <TableCell>{visitor.destinationName}</TableCell>
+                      <TableCell>{getStatusBadge(visitor.status)}</TableCell>
+                      <TableCell>
+                        {visitor.entryTime ? (
+                          <>
+                            {formatDate(visitor.entryTime)}
+                            <br />
+                            <span className="text-sm text-muted-foreground">
+                              {formatTime(visitor.entryTime)}
+                            </span>
+                          </>
+                        ) : (
+                          "Not checked in"
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {visitor.exitTime ? (
+                          <>
+                            {formatDate(visitor.exitTime)}
+                            <br />
+                            <span className="text-sm text-muted-foreground">
+                              {formatTime(visitor.exitTime)}
+                            </span>
+                          </>
+                        ) : (
+                          "Not checked out"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>

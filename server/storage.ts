@@ -7,6 +7,10 @@ import {
   type InsertStaffContact,
   type Visitor,
   type InsertVisitor,
+  type Employee,
+  type InsertEmployee,
+  type GuestPass,
+  type InsertGuestPass,
   type Setting,
   type InsertSetting,
   type ScheduledVisit,
@@ -15,6 +19,8 @@ import {
   destinations,
   staffContacts,
   visitors,
+  employees,
+  guestPasses,
   settings,
   scheduledVisits,
 } from "@shared/schema";
@@ -61,10 +67,34 @@ export interface IStorage {
   checkInVisitorByRfid(rfid: string): Promise<Visitor | undefined>;
   checkOutVisitorByRfid(rfid: string): Promise<Visitor | undefined>;
 
+  // Employees
+  getEmployees(): Promise<Employee[]>;
+  getEmployee(id: string): Promise<Employee | undefined>;
+  getEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
+  createEmployee(employee: InsertEmployee): Promise<Employee>;
+  updateEmployee(
+    id: string,
+    employee: Partial<Employee>,
+  ): Promise<Employee | undefined>;
+  checkInEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
+  checkOutEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
+  deleteEmployee(id: string): Promise<boolean>;
+
   // Settings
   getSettings(): Promise<Setting[]>;
   getSetting(key: string): Promise<Setting | undefined>;
   upsertSetting(setting: InsertSetting): Promise<Setting>;
+
+  // Guest Passes
+  getGuestPasses(): Promise<GuestPass[]>;
+  getGuestPass(id: string): Promise<GuestPass | undefined>;
+  createGuestPass(pass: InsertGuestPass): Promise<GuestPass>;
+  updateGuestPass(
+    id: string,
+    pass: Partial<GuestPass>,
+  ): Promise<GuestPass | undefined>;
+  deleteGuestPass(id: string): Promise<boolean>;
+  generateGuestPasses(count: number): Promise<GuestPass[]>;
 
   // Scheduled Visits
   getScheduledVisits(
@@ -192,19 +222,26 @@ export class DatabaseStorage implements IStorage {
         .from(visitors)
         .where(
           or(
+            // Visitors with entry time within range
             and(
+              isNotNull(visitors.entryTime),
               gte(visitors.entryTime, startDate),
               lte(visitors.entryTime, endDate),
             ),
+            // Visitors with entry time before end date and exit time after start date (or no exit time)
             and(
+              isNotNull(visitors.entryTime),
               lte(visitors.entryTime, endDate),
               or(isNull(visitors.exitTime), gte(visitors.exitTime, startDate)),
             ),
+            // Include all registered visitors without entry time (active registrations)
+            and(isNull(visitors.entryTime), eq(visitors.status, "registered")),
           ),
         )
         .orderBy(desc(visitors.entryTime));
     }
 
+    // Return all visitors when no date range is specified, ordered by entry time (nulls last)
     return db.select().from(visitors).orderBy(desc(visitors.entryTime));
   }
 
@@ -386,6 +423,146 @@ export class DatabaseStorage implements IStorage {
       .where(eq(scheduledVisits.id, id))
       .returning();
     return result.length > 0;
+  }
+
+  // Employees
+  async getEmployees(): Promise<Employee[]> {
+    return db.select().from(employees).orderBy(desc(employees.entryTime));
+  }
+
+  async getEmployee(id: string): Promise<Employee | undefined> {
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.id, id));
+    return employee || undefined;
+  }
+
+  async getEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
+    const trimmedRfid = rfid.trim();
+    // Only return employees who haven't completed their visit (no exitTime)
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(and(eq(employees.rfid, trimmedRfid), isNull(employees.exitTime)));
+    return employee || undefined;
+  }
+
+  async createEmployee(employee: InsertEmployee): Promise<Employee> {
+    const [created] = await db.insert(employees).values(employee).returning();
+    return created;
+  }
+
+  async updateEmployee(
+    id: string,
+    employee: Partial<Employee>,
+  ): Promise<Employee | undefined> {
+    const [updated] = await db
+      .update(employees)
+      .set(employee)
+      .where(eq(employees.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async checkInEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(and(eq(employees.rfid, rfid), isNull(employees.entryTime)));
+
+    if (!employee) return undefined;
+
+    const [updated] = await db
+      .update(employees)
+      .set({ status: "checked_in", entryTime: new Date() })
+      .where(eq(employees.id, employee.id))
+      .returning();
+
+    return updated || undefined;
+  }
+
+  async checkOutEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
+    const [employee] = await db
+      .select()
+      .from(employees)
+      .where(
+        and(
+          eq(employees.rfid, rfid),
+          isNotNull(employees.entryTime),
+          isNull(employees.exitTime),
+        ),
+      );
+
+    if (!employee) return undefined;
+
+    const [updated] = await db
+      .update(employees)
+      .set({ status: "checked_out", exitTime: new Date() })
+      .where(eq(employees.id, employee.id))
+      .returning();
+
+    return updated || undefined;
+  }
+
+  async deleteEmployee(id: string): Promise<boolean> {
+    const result = await db
+      .delete(employees)
+      .where(eq(employees.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // Guest Passes
+  async getGuestPasses(): Promise<GuestPass[]> {
+    return db.select().from(guestPasses).orderBy(desc(guestPasses.createdAt));
+  }
+
+  async getGuestPass(id: string): Promise<GuestPass | undefined> {
+    const [pass] = await db
+      .select()
+      .from(guestPasses)
+      .where(eq(guestPasses.id, id));
+    return pass || undefined;
+  }
+
+  async createGuestPass(pass: InsertGuestPass): Promise<GuestPass> {
+    const [created] = await db.insert(guestPasses).values(pass).returning();
+    return created;
+  }
+
+  async updateGuestPass(
+    id: string,
+    pass: Partial<GuestPass>,
+  ): Promise<GuestPass | undefined> {
+    const [updated] = await db
+      .update(guestPasses)
+      .set(pass)
+      .where(eq(guestPasses.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteGuestPass(id: string): Promise<boolean> {
+    const result = await db
+      .delete(guestPasses)
+      .where(eq(guestPasses.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async generateGuestPasses(count: number): Promise<GuestPass[]> {
+    const passes: InsertGuestPass[] = [];
+    for (let i = 0; i < count; i++) {
+      const passNumber = `V${String(Math.floor(Math.random() * 10000)).padStart(4, "0")}`;
+      passes.push({
+        passNumber,
+        qrCode: passNumber,
+        isAvailable: true,
+      });
+    }
+    const created = await db.insert(guestPasses).values(passes).returning();
+    return created;
   }
 }
 

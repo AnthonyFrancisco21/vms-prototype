@@ -9,6 +9,8 @@ import {
   insertDestinationSchema,
   insertStaffContactSchema,
   insertVisitorSchema,
+  insertEmployeeSchema,
+  insertGuestPassSchema,
   insertSettingSchema,
   insertScheduledVisitSchema,
 } from "@shared/schema";
@@ -248,15 +250,24 @@ export async function registerRoutes(
 
       console.log("Schema validation passed");
 
-      // Check if RFID is already in use by an active visitor (no exitTime)
+      // Check if RFID is already in use by an active visitor or employee (no exitTime)
       if (parsed.data.rfid) {
         const existingVisitor = await storage.getVisitorByRfid(
+          parsed.data.rfid,
+        );
+        const existingEmployee = await storage.getEmployeeByRfid(
           parsed.data.rfid,
         );
         if (existingVisitor) {
           return res.status(400).json({
             error:
               "This RFID card is already assigned to an active visitor. Please use a different RFID card or wait for the current visitor to check out.",
+          });
+        }
+        if (existingEmployee) {
+          return res.status(400).json({
+            error:
+              "This RFID card is already assigned to an active employee. Please use a different RFID card or wait for the current employee to check out.",
           });
         }
       }
@@ -451,19 +462,27 @@ export async function registerRoutes(
 
       const { rfid } = parsed.data;
 
-      // Try to check in first (for registered visitors)
-      let updatedVisitor = await storage.checkInVisitorByRfid(rfid);
+      // First try employees
+      let updatedEmployee = await storage.checkInEmployeeByRfid(rfid);
+      if (!updatedEmployee) {
+        updatedEmployee = await storage.checkOutEmployeeByRfid(rfid);
+      }
 
-      // If check-in failed, try check-out (for checked-in visitors)
+      if (updatedEmployee) {
+        return res.json(updatedEmployee);
+      }
+
+      // Then try visitors
+      let updatedVisitor = await storage.checkInVisitorByRfid(rfid);
       if (!updatedVisitor) {
         updatedVisitor = await storage.checkOutVisitorByRfid(rfid);
       }
 
-      // If both failed, no active visitor with this RFID
+      // If both failed, no active person with this RFID
       if (!updatedVisitor) {
         return res
           .status(404)
-          .json({ error: "No visitor recorded with this RFID" });
+          .json({ error: "No person recorded with this RFID" });
       }
 
       res.json(updatedVisitor);
@@ -769,6 +788,273 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting scheduled visit:", error);
       res.status(500).json({ error: "Failed to delete scheduled visit" });
+    }
+  });
+
+  // ============ EMPLOYEES ============
+  app.get("/api/employees", async (req, res) => {
+    try {
+      const employees = await storage.getEmployees();
+      res.json(employees);
+    } catch (error) {
+      console.error("Error fetching employees:", error);
+      res.status(500).json({ error: "Failed to fetch employees" });
+    }
+  });
+
+  app.get("/api/employees/:id", async (req, res) => {
+    try {
+      const employee = await storage.getEmployee(req.params.id);
+      if (!employee) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+      res.json(employee);
+    } catch (error) {
+      console.error("Error fetching employee:", error);
+      res.status(500).json({ error: "Failed to fetch employee" });
+    }
+  });
+
+  app.get("/api/employees/rfid/:rfid", async (req, res) => {
+    try {
+      const employee = await storage.getEmployeeByRfid(req.params.rfid);
+      if (!employee) {
+        return res
+          .status(404)
+          .json({ error: "Employee not found with this RFID" });
+      }
+      res.json(employee);
+    } catch (error) {
+      console.error("Error fetching employee by RFID:", error);
+      res.status(500).json({ error: "Failed to fetch employee" });
+    }
+  });
+
+  app.post("/api/employees", async (req, res) => {
+    try {
+      console.log("Employee registration request received");
+      console.log("Request body keys:", Object.keys(req.body));
+
+      const parsed = insertEmployeeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        console.log("Schema validation failed:", parsed.error);
+        return res.status(400).json({ error: parsed.error.message });
+      }
+
+      console.log("Schema validation passed");
+
+      // Check if RFID is already in use by an active employee (no exitTime)
+      if (parsed.data.rfid) {
+        const existingEmployee = await storage.getEmployeeByRfid(
+          parsed.data.rfid,
+        );
+        if (existingEmployee) {
+          return res.status(400).json({
+            error:
+              "This RFID card is already assigned to an active employee. Please use a different RFID card.",
+          });
+        }
+      }
+
+      // Handle ID scan image saving
+      let idScanImage = parsed.data.idScanImage;
+      console.log(
+        "Processing ID scan image:",
+        idScanImage ? "present" : "empty",
+      );
+      if (idScanImage && idScanImage.startsWith("data:image/")) {
+        try {
+          // Save to uploads folder
+          const uploadsDir = path.join(__dirname, "uploads");
+          await fs.promises.mkdir(uploadsDir, { recursive: true });
+
+          const base64Data = idScanImage.split(",")[1];
+          if (!base64Data) {
+            throw new Error("Invalid base64 data for ID scan");
+          }
+          const buffer = Buffer.from(base64Data, "base64");
+          const sanitizedName = parsed.data.name.replace(/[^a-zA-Z0-9]/g, "_");
+          const timestamp = Date.now();
+          const fileName = `${sanitizedName}_id_${timestamp}.jpg`;
+          const filePath = path.join(uploadsDir, fileName);
+          await fs.promises.writeFile(filePath, buffer);
+          idScanImage = `/uploads/${fileName}`;
+          console.log("ID scan image saved:", filePath);
+        } catch (error) {
+          console.error("Error saving ID scan image:", error);
+          // Continue without saving the image
+          idScanImage = "";
+        }
+      } else if (idScanImage) {
+        // If it's not a data URL but contains data, don't store it
+        console.log("ID scan image is not a data URL, clearing it");
+        idScanImage = "";
+      }
+
+      // Handle photo saving
+      let photoImage = parsed.data.photoImage;
+      console.log("Processing photo image:", photoImage ? "present" : "empty");
+      if (photoImage && photoImage.startsWith("data:image/")) {
+        try {
+          // Save to uploads folder
+          const uploadsDir = path.join(__dirname, "uploads");
+          await fs.promises.mkdir(uploadsDir, { recursive: true });
+
+          const base64Data = photoImage.split(",")[1];
+          if (!base64Data) {
+            throw new Error("Invalid base64 data for photo");
+          }
+          const buffer = Buffer.from(base64Data, "base64");
+          const sanitizedName = parsed.data.name.replace(/[^a-zA-Z0-9]/g, "_");
+          const timestamp = Date.now();
+          const fileName = `${sanitizedName}_photo_${timestamp}.jpg`;
+          const filePath = path.join(uploadsDir, fileName);
+          await fs.promises.writeFile(filePath, buffer);
+          photoImage = `/uploads/${fileName}`;
+          console.log("Photo image saved:", filePath);
+        } catch (error) {
+          console.error("Error saving photo image:", error);
+          // Continue without saving the image
+          photoImage = "";
+        }
+      } else if (photoImage) {
+        // If it's not a data URL but contains data, don't store it
+        photoImage = "";
+      }
+
+      console.log("Creating employee with data:", {
+        ...parsed.data,
+        photoImage: photoImage ? "present" : "empty",
+      });
+
+      console.log("About to create employee with:");
+      console.log("idScanImage:", idScanImage ? "set" : "empty");
+      console.log("photoImage:", photoImage ? "set" : "empty");
+
+      const employee = await storage.createEmployee({
+        ...parsed.data,
+        idScanImage,
+        photoImage,
+        status: "registered",
+        entryTime: null,
+      });
+
+      console.log("Employee created successfully with ID:", employee.id);
+      console.log("Final employee data:", {
+        idScanImage: employee.idScanImage ? "present" : "empty",
+        photoImage: employee.photoImage ? "present" : "empty",
+      });
+
+      res.status(201).json(employee);
+    } catch (error) {
+      console.error("Error creating employee:", error);
+      res.status(500).json({ error: "Failed to create employee" });
+    }
+  });
+
+  app.patch("/api/employees/:id", async (req, res) => {
+    try {
+      const employee = await storage.updateEmployee(req.params.id, req.body);
+      if (!employee) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+      res.json(employee);
+    } catch (error) {
+      console.error("Error updating employee:", error);
+      res.status(500).json({ error: "Failed to update employee" });
+    }
+  });
+
+  app.delete("/api/employees/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteEmployee(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting employee:", error);
+      res.status(500).json({ error: "Failed to delete employee" });
+    }
+  });
+
+  // ============ GUEST PASSES ============
+  app.get("/api/guest-passes", async (req, res) => {
+    try {
+      const passes = await storage.getGuestPasses();
+      res.json(passes);
+    } catch (error) {
+      console.error("Error fetching guest passes:", error);
+      res.status(500).json({ error: "Failed to fetch guest passes" });
+    }
+  });
+
+  app.get("/api/guest-passes/:id", async (req, res) => {
+    try {
+      const pass = await storage.getGuestPass(req.params.id);
+      if (!pass) {
+        return res.status(404).json({ error: "Guest pass not found" });
+      }
+      res.json(pass);
+    } catch (error) {
+      console.error("Error fetching guest pass:", error);
+      res.status(500).json({ error: "Failed to fetch guest pass" });
+    }
+  });
+
+  app.post("/api/guest-passes", async (req, res) => {
+    try {
+      const parsed = insertGuestPassSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.message });
+      }
+      const pass = await storage.createGuestPass(parsed.data);
+      res.status(201).json(pass);
+    } catch (error) {
+      console.error("Error creating guest pass:", error);
+      res.status(500).json({ error: "Failed to create guest pass" });
+    }
+  });
+
+  app.post("/api/guest-passes/generate", async (req, res) => {
+    try {
+      const { count } = req.body;
+      if (!count || typeof count !== "number" || count < 1 || count > 100) {
+        return res
+          .status(400)
+          .json({ error: "Count must be a number between 1 and 100" });
+      }
+      const passes = await storage.generateGuestPasses(count);
+      res.status(201).json({ passes, count });
+    } catch (error) {
+      console.error("Error generating guest passes:", error);
+      res.status(500).json({ error: "Failed to generate guest passes" });
+    }
+  });
+
+  app.patch("/api/guest-passes/:id", async (req, res) => {
+    try {
+      const pass = await storage.updateGuestPass(req.params.id, req.body);
+      if (!pass) {
+        return res.status(404).json({ error: "Guest pass not found" });
+      }
+      res.json(pass);
+    } catch (error) {
+      console.error("Error updating guest pass:", error);
+      res.status(500).json({ error: "Failed to update guest pass" });
+    }
+  });
+
+  app.delete("/api/guest-passes/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteGuestPass(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Guest pass not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting guest pass:", error);
+      res.status(500).json({ error: "Failed to delete guest pass" });
     }
   });
 

@@ -11,7 +11,11 @@ interface IDScannerProps {
   scannedText?: string | null;
 }
 
-export function IDScanner({ onScan, scannedImage, scannedText }: IDScannerProps) {
+export function IDScanner({
+  onScan,
+  scannedImage,
+  scannedText,
+}: IDScannerProps) {
   const webcamRef = useRef<Webcam>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -22,7 +26,9 @@ export function IDScanner({ onScan, scannedImage, scannedText }: IDScannerProps)
         setIsProcessing(true);
         try {
           const worker = await createWorker("eng");
-          const { data: { text } } = await worker.recognize(imageSrc);
+          const {
+            data: { text },
+          } = await worker.recognize(imageSrc);
           await worker.terminate();
           onScan(imageSrc, text);
         } catch (error) {
@@ -76,15 +82,6 @@ export function IDScanner({ onScan, scannedImage, scannedText }: IDScannerProps)
                   Position ID within frame
                 </div>
               </div>
-            </div>
-          )}
-
-          {scannedText && (
-            <div className="w-full max-w-md p-3 bg-muted rounded-lg text-sm">
-              <p className="font-medium mb-1 text-foreground">Extracted Text:</p>
-              <p className="text-muted-foreground whitespace-pre-wrap line-clamp-3" data-testid="text-ocr-result">
-                {scannedText || "No text detected"}
-              </p>
             </div>
           )}
 

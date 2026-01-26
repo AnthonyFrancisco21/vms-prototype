@@ -31,10 +31,19 @@ import {
   Loader2,
 } from "lucide-react";
 
-const steps = [
+const visitorSteps = [
   { id: 0, title: "Registration Type", icon: User },
   { id: 1, title: "Select Destination", icon: MapPin },
   { id: 2, title: "Visitor Details", icon: User },
+  { id: 3, title: "Take Photo", icon: Camera },
+  { id: 4, title: "Scan RFID", icon: CreditCard },
+  { id: 5, title: "Confirm & Submit", icon: ClipboardList },
+];
+
+const employeeSteps = [
+  { id: 0, title: "Registration Type", icon: User },
+  { id: 1, title: "Employee Details", icon: User },
+  { id: 2, title: "Scan ID", icon: ClipboardList },
   { id: 3, title: "Take Photo", icon: Camera },
   { id: 4, title: "Scan RFID", icon: CreditCard },
   { id: 5, title: "Confirm & Submit", icon: ClipboardList },
@@ -60,20 +69,22 @@ export default function Landing() {
   );
   const rfidInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus RFID input when step 4 is reached
+  // Auto-focus RFID input when RFID step is reached
   useEffect(() => {
-    if (currentStep === 4 && rfidInputRef.current) {
+    const rfidStep = formData.registrationType === "employee" ? 4 : 4;
+    if (currentStep === rfidStep && rfidInputRef.current) {
       rfidInputRef.current.focus();
       // Clear any existing value when focusing
       setFormData((prev) => ({ ...prev, rfid: "" }));
     }
-  }, [currentStep]);
+  }, [currentStep, formData.registrationType]);
 
   // Handle RFID input with Enter key detection
   useEffect(() => {
+    const rfidStep = formData.registrationType === "employee" ? 4 : 4;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
-        currentStep === 4 &&
+        currentStep === rfidStep &&
         e.key === "Enter" &&
         formData.rfid.trim() !== ""
       ) {
@@ -82,11 +93,11 @@ export default function Landing() {
       }
     };
 
-    if (currentStep === 4) {
+    if (currentStep === rfidStep) {
       document.addEventListener("keydown", handleKeyDown);
       return () => document.removeEventListener("keydown", handleKeyDown);
     }
-  }, [currentStep, formData.rfid]);
+  }, [currentStep, formData.rfid, formData.registrationType]);
 
   const { data: destinations = [], isLoading: loadingDestinations } = useQuery<
     Destination[]
@@ -108,7 +119,11 @@ export default function Landing() {
         ...data,
         destinations: JSON.stringify(data.destinations), // send as JSON string
       };
-      const res = await apiRequest("POST", "/api/visitors", payload);
+      const endpoint =
+        data.registrationType === "employee"
+          ? "/api/employees"
+          : "/api/visitors";
+      const res = await apiRequest("POST", endpoint, payload);
       return res.json();
     },
     onSuccess: (visitor: Visitor) => {
@@ -129,7 +144,8 @@ export default function Landing() {
   });
 
   const handleNext = () => {
-    if (currentStep < 5) {
+    const maxSteps = formData.registrationType === "employee" ? 5 : 5;
+    if (currentStep < maxSteps) {
       setCurrentStep(currentStep + 1);
     }
   };
@@ -162,25 +178,44 @@ export default function Landing() {
   };
 
   const canProceed = () => {
-    switch (currentStep) {
-      case 0:
-        return formData.registrationType === "visitor";
-      case 1:
-        return formData.destinations.length > 0;
-      case 2:
-        return (
-          formData.name !== "" &&
-          formData.personToVisit !== "" &&
-          formData.purpose !== ""
-        );
-      case 3:
-        return formData.photoImage !== "";
-      case 4:
-        return formData.rfid !== "";
-      case 5:
-        return true;
-      default:
-        return false;
+    if (formData.registrationType === "employee") {
+      switch (currentStep) {
+        case 0:
+          return formData.registrationType === "employee";
+        case 1:
+          return formData.name !== "";
+        case 2:
+          return formData.idScanImage !== "";
+        case 3:
+          return formData.photoImage !== "";
+        case 4:
+          return formData.rfid !== "";
+        case 5:
+          return true;
+        default:
+          return false;
+      }
+    } else {
+      switch (currentStep) {
+        case 0:
+          return formData.registrationType === "visitor";
+        case 1:
+          return formData.destinations.length > 0;
+        case 2:
+          return (
+            formData.name !== "" &&
+            formData.personToVisit !== "" &&
+            formData.purpose !== ""
+          );
+        case 3:
+          return formData.photoImage !== "";
+        case 4:
+          return formData.rfid !== "";
+        case 5:
+          return true;
+        default:
+          return false;
+      }
     }
   };
 
@@ -283,7 +318,10 @@ export default function Landing() {
 
         <div className="flex justify-center mb-8">
           <div className="flex items-center gap-2">
-            {steps.map((step, index) => (
+            {(formData.registrationType === "employee"
+              ? employeeSteps
+              : visitorSteps
+            ).map((step, index) => (
               <div key={step.id} className="flex items-center">
                 <div
                   className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${
@@ -302,7 +340,12 @@ export default function Landing() {
                     {step.id}
                   </span>
                 </div>
-                {index < steps.length - 1 && (
+                {index <
+                  (formData.registrationType === "employee"
+                    ? employeeSteps
+                    : visitorSteps
+                  ).length -
+                    1 && (
                   <ChevronRight className="h-4 w-4 mx-1 text-muted-foreground" />
                 )}
               </div>
@@ -314,10 +357,19 @@ export default function Landing() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               {(() => {
-                const StepIcon = steps[currentStep].icon;
+                const currentSteps =
+                  formData.registrationType === "employee"
+                    ? employeeSteps
+                    : visitorSteps;
+                const StepIcon = currentSteps[currentStep].icon;
                 return <StepIcon className="h-5 w-5" />;
               })()}
-              Step {currentStep + 1}: {steps[currentStep].title}
+              Step {currentStep + 1}:{" "}
+              {
+                (formData.registrationType === "employee"
+                  ? employeeSteps
+                  : visitorSteps)[currentStep].title
+              }
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6">
@@ -431,6 +483,23 @@ export default function Landing() {
                 </div>
                 <div className="max-w-md mx-auto space-y-4">
                   <div>
+                    <Label>Scan ID (Name will be auto-extracted)</Label>
+                    <div className="mt-2">
+                      <IDScanner
+                        onScan={(image, text) =>
+                          setFormData({
+                            ...formData,
+                            idScanImage: image,
+                            idOcrText: text,
+                            name: text || formData.name,
+                          })
+                        }
+                        scannedImage={formData.idScanImage}
+                        scannedText={formData.idOcrText}
+                      />
+                    </div>
+                  </div>
+                  <div>
                     <Label htmlFor="visitorName">Your Name</Label>
                     <Input
                       id="visitorName"
@@ -438,7 +507,7 @@ export default function Landing() {
                       onChange={(e) =>
                         setFormData({ ...formData, name: e.target.value })
                       }
-                      placeholder="Enter your full name"
+                      placeholder="Enter your full name (or scan ID above)"
                       className="h-12 mt-2"
                       data-testid="input-visitor-name"
                     />
@@ -482,23 +551,6 @@ export default function Landing() {
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div>
-                    <Label>Scan ID</Label>
-                    <div className="mt-2">
-                      <IDScanner
-                        onScan={(image, text) =>
-                          setFormData({
-                            ...formData,
-                            idScanImage: image,
-                            idOcrText: text,
-                            name: text || formData.name,
-                          })
-                        }
-                        scannedImage={formData.idScanImage}
-                        scannedText={formData.idOcrText}
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -627,6 +679,218 @@ export default function Landing() {
               </div>
             )}
 
+            {/* Employee Registration Steps */}
+            {currentStep === 1 && formData.registrationType === "employee" && (
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <User className="h-12 w-12 mx-auto text-primary mb-2" />
+                  <p className="text-muted-foreground">
+                    Please provide your employee details
+                  </p>
+                </div>
+                <div className="max-w-md mx-auto space-y-4">
+                  <div>
+                    <Label htmlFor="employeeName">Employee Name</Label>
+                    <Input
+                      id="employeeName"
+                      value={formData.name}
+                      onChange={(e) =>
+                        setFormData({ ...formData, name: e.target.value })
+                      }
+                      placeholder="Enter your full name"
+                      className="h-12 mt-2"
+                      data-testid="input-employee-name"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {currentStep === 2 && formData.registrationType === "employee" && (
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <ClipboardList className="h-12 w-12 mx-auto text-primary mb-2" />
+                  <p className="text-muted-foreground">
+                    Please scan your ID or upload it
+                  </p>
+                </div>
+                <div className="max-w-md mx-auto space-y-4">
+                  <div>
+                    <Label>Scan ID</Label>
+                    <div className="mt-2">
+                      <IDScanner
+                        onScan={(image, text) =>
+                          setFormData({
+                            ...formData,
+                            idScanImage: image,
+                            idOcrText: text,
+                          })
+                        }
+                        scannedImage={formData.idScanImage}
+                        scannedText={formData.idOcrText}
+                      />
+                      <div className="mt-2">
+                        <Label className="text-sm text-muted-foreground">
+                          Or upload ID scan:
+                        </Label>
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (e) => {
+                                setFormData({
+                                  ...formData,
+                                  idScanImage: e.target?.result as string,
+                                });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="h-10 mt-1"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {currentStep === 3 && formData.registrationType === "employee" && (
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <Camera className="h-12 w-12 mx-auto text-primary mb-2" />
+                  <p className="text-muted-foreground">
+                    Please take a photo or upload one
+                  </p>
+                </div>
+                <div className="max-w-md mx-auto space-y-4">
+                  <div>
+                    <Label>Take Photo</Label>
+                    <div className="mt-2">
+                      <WebcamCapture
+                        onCapture={(image) =>
+                          setFormData({ ...formData, photoImage: image })
+                        }
+                        capturedImage={formData.photoImage}
+                      />
+                      <div className="mt-2">
+                        <Label className="text-sm text-muted-foreground">
+                          Or upload photo:
+                        </Label>
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (e) => {
+                                setFormData({
+                                  ...formData,
+                                  photoImage: e.target?.result as string,
+                                });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="h-10 mt-1"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {currentStep === 4 && formData.registrationType === "employee" && (
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <CreditCard className="h-12 w-12 mx-auto text-primary mb-2" />
+                  <p className="text-muted-foreground">
+                    Please tap your RFID card on the reader.
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    The system will automatically detect and proceed.
+                  </p>
+                </div>
+                <div className="max-w-md mx-auto">
+                  <Label htmlFor="rfid" className="text-sm font-medium">
+                    RFID Number
+                  </Label>
+                  <Input
+                    ref={rfidInputRef}
+                    id="rfid"
+                    value={formData.rfid}
+                    onChange={(e) =>
+                      setFormData({ ...formData, rfid: e.target.value.trim() })
+                    }
+                    placeholder="Tap RFID card here..."
+                    className="h-12 mt-2 text-center text-lg font-mono bg-muted border-2 border-dashed border-muted-foreground/50 focus:border-primary transition-colors"
+                    autoComplete="off"
+                  />
+                  {formData.rfid && (
+                    <p className="text-sm text-green-600 mt-2 text-center">
+                      RFID detected: {formData.rfid}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {currentStep === 5 && formData.registrationType === "employee" && (
+              <div className="space-y-6">
+                <div className="text-center mb-6">
+                  <CheckCircle2 className="h-12 w-12 mx-auto text-primary mb-2" />
+                  <p className="text-muted-foreground">
+                    Please review your information before submitting.
+                  </p>
+                </div>
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="p-4 bg-muted rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Employee Name
+                      </p>
+                      <p className="font-medium">{formData.name}</p>
+                    </div>
+                    <div className="p-4 bg-muted rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-1">RFID</p>
+                      <p className="font-medium">{formData.rfid}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    {formData.idScanImage && (
+                      <div className="p-4 bg-muted rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-2">
+                          ID Scan
+                        </p>
+                        <img
+                          src={formData.idScanImage}
+                          alt="ID Scan"
+                          className="w-full h-24 object-cover rounded"
+                        />
+                      </div>
+                    )}
+                    {formData.photoImage && (
+                      <div className="p-4 bg-muted rounded-lg">
+                        <p className="text-xs text-muted-foreground mb-2">
+                          Photo
+                        </p>
+                        <img
+                          src={formData.photoImage}
+                          alt="Employee Photo"
+                          className="w-24 h-24 object-cover rounded mx-auto"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-between mt-8">
               <Button
                 variant="outline"
@@ -639,7 +903,8 @@ export default function Landing() {
                 Previous
               </Button>
 
-              {currentStep < 5 ? (
+              {currentStep <
+              (formData.registrationType === "employee" ? 5 : 5) ? (
                 <Button
                   onClick={handleNext}
                   disabled={!canProceed()}

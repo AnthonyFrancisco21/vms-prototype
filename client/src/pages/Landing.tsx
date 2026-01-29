@@ -220,6 +220,7 @@ export default function Landing() {
   };
 
   if (registeredVisitor) {
+    const isVisitor = registeredVisitor.registrationType === "visitor";
     return (
       <div className="flex-1 p-6 overflow-auto">
         <div className="max-w-2xl mx-auto">
@@ -233,21 +234,10 @@ export default function Landing() {
                 Registration Complete
               </h2>
               <p className="text-muted-foreground mb-6">
-                Your guest pass has been issued. Please proceed to the reception
-                desk.
+                {isVisitor
+                  ? "Your registration has been completed. Please proceed to the reception desk."
+                  : "Your employee registration has been completed. You can now check in/out using the kiosk."}
               </p>
-
-              <div className="bg-muted rounded-lg p-6 mb-6">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Your Guest Pass Number
-                </p>
-                <p
-                  className="text-5xl font-mono font-bold text-foreground"
-                  data-testid="text-pass-number"
-                >
-                  {registeredVisitor.passNumber || "N/A"}
-                </p>
-              </div>
 
               <div className="bg-muted rounded-lg p-4 mb-6 text-left">
                 <p className="text-xs text-muted-foreground">Welcome</p>
@@ -259,34 +249,51 @@ export default function Landing() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-left mb-6">
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-xs text-muted-foreground">Destination</p>
-                  <p className="font-medium" data-testid="text-destination">
-                    {registeredVisitor.destinationName}
-                  </p>
+              {isVisitor ? (
+                <div className="grid grid-cols-2 gap-4 text-left mb-6">
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">Destination</p>
+                    <p className="font-medium" data-testid="text-destination">
+                      {registeredVisitor.destinationName}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">
+                      Person to Visit
+                    </p>
+                    <p className="font-medium" data-testid="text-person">
+                      {registeredVisitor.personToVisit}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">Purpose</p>
+                    <p className="font-medium" data-testid="text-purpose">
+                      {registeredVisitor.purpose}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <p className="font-medium" data-testid="text-status">
+                      Registered - Ready for Check-in
+                    </p>
+                  </div>
                 </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-xs text-muted-foreground">
-                    Person to Visit
-                  </p>
-                  <p className="font-medium" data-testid="text-person">
-                    {registeredVisitor.personToVisit}
-                  </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-4 text-left mb-6">
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">RFID</p>
+                    <p className="font-medium" data-testid="text-rfid">
+                      {registeredVisitor.rfid}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <p className="font-medium" data-testid="text-status">
+                      Active - Ready for Check-in/out
+                    </p>
+                  </div>
                 </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-xs text-muted-foreground">Purpose</p>
-                  <p className="font-medium" data-testid="text-purpose">
-                    {registeredVisitor.purpose}
-                  </p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <p className="font-medium" data-testid="text-status">
-                    Registered - Ready for Check-in
-                  </p>
-                </div>
-              </div>
+              )}
 
               <Button
                 onClick={resetForm}
@@ -294,7 +301,7 @@ export default function Landing() {
                 className="w-full"
                 data-testid="button-new-visitor"
               >
-                Register New Visitor
+                Register New {isVisitor ? "Visitor" : "Employee"}
               </Button>
             </CardContent>
           </Card>

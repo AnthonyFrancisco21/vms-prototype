@@ -9,6 +9,8 @@ import {
   type InsertVisitor,
   type Employee,
   type InsertEmployee,
+  type AttendanceLog,
+  type InsertAttendanceLog,
   type GuestPass,
   type InsertGuestPass,
   type Setting,
@@ -20,12 +22,23 @@ import {
   staffContacts,
   visitors,
   employees,
+  attendanceLogs,
   guestPasses,
   settings,
   scheduledVisits,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, desc, isNull, isNotNull, or } from "drizzle-orm";
+import {
+  eq,
+  and,
+  gte,
+  lte,
+  desc,
+  isNull,
+  isNotNull,
+  or,
+  inArray,
+} from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -66,19 +79,33 @@ export interface IStorage {
   ): Promise<Visitor | undefined>;
   checkInVisitorByRfid(rfid: string): Promise<Visitor | undefined>;
   checkOutVisitorByRfid(rfid: string): Promise<Visitor | undefined>;
+  deleteVisitor(id: string): Promise<boolean>;
 
   // Employees
   getEmployees(): Promise<Employee[]>;
   getEmployee(id: string): Promise<Employee | undefined>;
+  getActiveEmployees(): Promise<(Employee & { entryTime: Date })[]>;
   getEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
   createEmployee(employee: InsertEmployee): Promise<Employee>;
   updateEmployee(
     id: string,
     employee: Partial<Employee>,
   ): Promise<Employee | undefined>;
-  checkInEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
-  checkOutEmployeeByRfid(rfid: string): Promise<Employee | undefined>;
   deleteEmployee(id: string): Promise<boolean>;
+
+  // Attendance Logs
+  getAttendanceLogs(employeeId?: string): Promise<AttendanceLog[]>;
+  getLatestAttendanceLogByRfid(
+    rfid: string,
+  ): Promise<AttendanceLog | undefined>;
+  createAttendanceLog(log: InsertAttendanceLog): Promise<AttendanceLog>;
+  updateAttendanceLog(
+    id: string,
+    log: Partial<AttendanceLog>,
+  ): Promise<AttendanceLog | undefined>;
+  processEmployeeAttendance(
+    rfid: string,
+  ): Promise<{ employee: Employee; log: AttendanceLog } | undefined>;
 
   // Settings
   getSettings(): Promise<Setting[]>;
@@ -427,7 +454,7 @@ export class DatabaseStorage implements IStorage {
 
   // Employees
   async getEmployees(): Promise<Employee[]> {
-    return db.select().from(employees).orderBy(desc(employees.entryTime));
+    return db.select().from(employees).orderBy(employees.name);
   }
 
   async getEmployee(id: string): Promise<Employee | undefined> {
@@ -440,12 +467,49 @@ export class DatabaseStorage implements IStorage {
 
   async getEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
     const trimmedRfid = rfid.trim();
-    // Only return employees who haven't completed their visit (no exitTime)
     const [employee] = await db
       .select()
       .from(employees)
-      .where(and(eq(employees.rfid, trimmedRfid), isNull(employees.exitTime)));
+      .where(
+        and(eq(employees.rfid, trimmedRfid), eq(employees.isActive, true)),
+      );
     return employee || undefined;
+  }
+
+  async getActiveEmployees(): Promise<(Employee & { entryTime: Date })[]> {
+    // Get employees who have active attendance logs (checked in but not checked out)
+    const activeLogs = await db
+      .select({
+        employeeId: attendanceLogs.employeeId,
+        timeIn: attendanceLogs.timeIn,
+      })
+      .from(attendanceLogs)
+      .where(
+        and(
+          eq(attendanceLogs.status, "active"),
+          isNull(attendanceLogs.timeOut),
+        ),
+      );
+
+    if (activeLogs.length === 0) return [];
+
+    const employeeIds = activeLogs.map((log) => log.employeeId);
+    const employeeRecords = await db
+      .select()
+      .from(employees)
+      .where(
+        and(eq(employees.isActive, true), inArray(employees.id, employeeIds)),
+      )
+      .orderBy(employees.name);
+
+    // Add entryTime from the active log to each employee
+    return employeeRecords.map((employee) => {
+      const log = activeLogs.find((log) => log.employeeId === employee.id);
+      return {
+        ...employee,
+        entryTime: log?.timeIn || new Date(),
+      };
+    });
   }
 
   async createEmployee(employee: InsertEmployee): Promise<Employee> {
@@ -465,52 +529,85 @@ export class DatabaseStorage implements IStorage {
     return updated || undefined;
   }
 
-  async checkInEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(and(eq(employees.rfid, rfid), isNull(employees.entryTime)));
-
-    if (!employee) return undefined;
-
-    const [updated] = await db
-      .update(employees)
-      .set({ status: "checked_in", entryTime: new Date() })
-      .where(eq(employees.id, employee.id))
-      .returning();
-
-    return updated || undefined;
-  }
-
-  async checkOutEmployeeByRfid(rfid: string): Promise<Employee | undefined> {
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(
-        and(
-          eq(employees.rfid, rfid),
-          isNotNull(employees.entryTime),
-          isNull(employees.exitTime),
-        ),
-      );
-
-    if (!employee) return undefined;
-
-    const [updated] = await db
-      .update(employees)
-      .set({ status: "checked_out", exitTime: new Date() })
-      .where(eq(employees.id, employee.id))
-      .returning();
-
-    return updated || undefined;
-  }
-
   async deleteEmployee(id: string): Promise<boolean> {
     const result = await db
       .delete(employees)
       .where(eq(employees.id, id))
       .returning();
     return result.length > 0;
+  }
+
+  // Attendance Logs
+  async getAttendanceLogs(employeeId?: string): Promise<AttendanceLog[]> {
+    if (employeeId) {
+      return db
+        .select()
+        .from(attendanceLogs)
+        .where(eq(attendanceLogs.employeeId, employeeId))
+        .orderBy(desc(attendanceLogs.timeIn));
+    }
+    return db
+      .select()
+      .from(attendanceLogs)
+      .orderBy(desc(attendanceLogs.timeIn));
+  }
+
+  async getLatestAttendanceLogByRfid(
+    rfid: string,
+  ): Promise<AttendanceLog | undefined> {
+    const [log] = await db
+      .select()
+      .from(attendanceLogs)
+      .where(
+        and(eq(attendanceLogs.rfid, rfid), eq(attendanceLogs.status, "active")),
+      )
+      .orderBy(desc(attendanceLogs.timeIn));
+    return log || undefined;
+  }
+
+  async createAttendanceLog(log: InsertAttendanceLog): Promise<AttendanceLog> {
+    const [created] = await db.insert(attendanceLogs).values(log).returning();
+    return created;
+  }
+
+  async updateAttendanceLog(
+    id: string,
+    log: Partial<AttendanceLog>,
+  ): Promise<AttendanceLog | undefined> {
+    const [updated] = await db
+      .update(attendanceLogs)
+      .set(log)
+      .where(eq(attendanceLogs.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async processEmployeeAttendance(
+    rfid: string,
+  ): Promise<{ employee: Employee; log: AttendanceLog } | undefined> {
+    const employee = await this.getEmployeeByRfid(rfid);
+    if (!employee) return undefined;
+
+    const latestLog = await this.getLatestAttendanceLogByRfid(rfid);
+
+    if (!latestLog || latestLog.timeOut) {
+      // No active log or previous log is completed, create new time-in
+      const newLog = await this.createAttendanceLog({
+        employeeId: employee.id,
+        rfid: employee.rfid,
+        timeIn: new Date(),
+        date: new Date(),
+        status: "active",
+      });
+      return { employee, log: newLog };
+    } else {
+      // Active log exists, update with time-out
+      const updatedLog = await this.updateAttendanceLog(latestLog.id, {
+        timeOut: new Date(),
+        status: "completed",
+      });
+      return updatedLog ? { employee, log: updatedLog } : undefined;
+    }
   }
 
   // Guest Passes
@@ -563,6 +660,16 @@ export class DatabaseStorage implements IStorage {
     }
     const created = await db.insert(guestPasses).values(passes).returning();
     return created;
+  }
+
+  async deleteVisitor(id: string): Promise<boolean> {
+    console.log(`Attempting to delete visitor with ID: ${id}`);
+    const result = await db
+      .delete(visitors)
+      .where(eq(visitors.id, id))
+      .returning();
+    console.log(`Delete result:`, result);
+    return result.length > 0;
   }
 }
 

@@ -168,18 +168,50 @@ export const employees = pgTable("employees", {
   name: text("name").notNull(),
   idScanImage: text("id_scan_image"),
   photoImage: text("photo_image"),
-  rfid: text("rfid"), // RFID number
-  entryTime: timestamp("entry_time"),
-  exitTime: timestamp("exit_time"),
-  status: text("status").notNull().default("registered"),
+  rfid: text("rfid").notNull().unique(), // RFID number - permanent for employees
+  status: text("status").notNull().default("active"),
+  isActive: boolean("is_active").notNull().default(true),
 });
 
 export const insertEmployeeSchema = createInsertSchema(employees).omit({
   id: true,
+  status: true,
+  isActive: true,
 });
 
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
 export type Employee = typeof employees.$inferSelect;
+
+// Attendance logs table - records time in/out for employees
+export const attendanceLogs = pgTable("attendance_logs", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id")
+    .references(() => employees.id)
+    .notNull(),
+  rfid: text("rfid").notNull(), // Store RFID for quick lookup
+  timeIn: timestamp("time_in").notNull(),
+  timeOut: timestamp("time_out"),
+  date: timestamp("date").notNull().defaultNow(), // Date of attendance
+  status: text("status").notNull().default("active"), // active, completed
+});
+
+export const attendanceLogsRelations = relations(attendanceLogs, ({ one }) => ({
+  employee: one(employees, {
+    fields: [attendanceLogs.employeeId],
+    references: [employees.id],
+  }),
+}));
+
+export const insertAttendanceLogSchema = createInsertSchema(
+  attendanceLogs,
+).omit({
+  id: true,
+});
+
+export type InsertAttendanceLog = z.infer<typeof insertAttendanceLogSchema>;
+export type AttendanceLog = typeof attendanceLogs.$inferSelect;
 
 // Guest passes table
 export const guestPasses = pgTable("guest_passes", {

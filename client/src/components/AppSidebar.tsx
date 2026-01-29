@@ -67,6 +67,11 @@ const adminItems = [
     icon: Image,
   },
   {
+    title: "Employee Gallery",
+    url: "/admin/employee-gallery",
+    icon: Users,
+  },
+  {
     title: "Reports",
     url: "/admin/reports",
     icon: FileText,

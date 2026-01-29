@@ -7,16 +7,21 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Visitor, Employee } from "@shared/schema";
 import {
   User,
-  Clock,
   QrCode,
   MapPin,
-  CheckCircle2,
-  ArrowRightLeft, // Changed icon to represent In/Out
+  Check,
+  ArrowRight,
+  ArrowLeft,
   CloudSun,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 // Types
-type KioskPerson = (Visitor | Employee) & {
+type KioskPerson = (
+  | Visitor
+  | (Employee & { entryTime?: Date; exitTime?: Date; isCheckIn?: boolean })
+) & {
   personType: "visitor" | "employee";
 };
 
@@ -35,6 +40,7 @@ export default function Kiosk() {
   const [viewState, setViewState] = useState<DisplayState>({ status: "idle" });
   const [rfidInput, setRfidInput] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [temperature, setTemperature] = useState("Loading...");
 
   // Refs
   const rfidInputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +71,27 @@ export default function Kiosk() {
     return () => clearInterval(focusInterval);
   }, []);
 
+  // Fetch weather
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        const apiKey = import.meta.env.VITE_OPENWEATHER_API_KEY;
+        const location = "Makati,PH";
+
+        const response = await fetch(
+          `https://api.openweathermap.org/data/2.5/weather?q=${location}&appid=${apiKey}&units=metric`,
+        );
+
+        if (!response.ok) throw new Error("Weather fetch failed");
+        const data = await response.json();
+        setTemperature(`${Math.round(data.main.temp)}°C`);
+      } catch (error) {
+        console.error("Error fetching weather data:", error);
+      }
+    };
+    fetchWeather();
+  }, []);
+
   // Reset Screen Logic
   const scheduleReset = () => {
     if (resetScreenTimeoutRef.current)
@@ -82,18 +109,38 @@ export default function Kiosk() {
       const res = await apiRequest("POST", "/api/visitors/kiosk", { rfid });
       return res.json();
     },
-    onSuccess: (person: Visitor | Employee) => {
+    onSuccess: (
+      person:
+        | Visitor
+        | (Employee & {
+            entryTime?: Date;
+            exitTime?: Date;
+            isCheckIn?: boolean;
+          }),
+    ) => {
       const isCheckOut = !!person.exitTime;
       const personType = "registrationType" in person ? "visitor" : "employee";
+
+      // For employees, use the isCheckIn flag if available, otherwise fall back to exitTime check
+      const isEmployeeCheckIn =
+        personType === "employee" && "isCheckIn" in person
+          ? (person as any).isCheckIn
+          : !isCheckOut;
+
+      const finalIsCheckOut =
+        personType === "employee" ? !isEmployeeCheckIn : isCheckOut;
+      const finalMessage = (
+        personType === "employee" ? isEmployeeCheckIn : !isCheckOut
+      )
+        ? "Welcome In"
+        : "See you soon";
 
       setViewState({
         status: "success",
         person: { ...person, personType } as KioskPerson,
         timestamp: new Date(),
-        isCheckOut: isCheckOut,
-        message: isCheckOut
-          ? "Goodbye, see you soon."
-          : "Welcome, access granted.",
+        isCheckOut: finalIsCheckOut,
+        message: finalMessage,
       });
 
       queryClient.invalidateQueries({ queryKey: ["/api/visitors"] });
@@ -125,7 +172,6 @@ export default function Kiosk() {
       throw new Error("Card not recognized");
     },
     onSuccess: (person: KioskPerson) => {
-      // Auto-process without confirmation
       setViewState({ status: "processing", person: person });
       if (person.rfid) {
         processMutation.mutate(person.rfid);
@@ -140,7 +186,7 @@ export default function Kiosk() {
     onError: () => {
       setViewState({
         status: "error",
-        message: "Card not registered in system.",
+        message: "Card not recognized",
       });
       scheduleReset();
     },
@@ -183,20 +229,12 @@ export default function Kiosk() {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      hour12: false,
     });
   };
 
   return (
-    // CHANGED: Overall Container - Dark Theme #111111 (zinc-950)
-    <div className="h-screen w-full bg-[#0a0a0a] text-white flex items-center justify-center relative overflow-hidden font-sans selection:bg-blue-500/30">
-      {/* CHANGED: Background Ambient Blue Glow (Matches new logo color) */}
-      <div
-        className="absolute right-[-10%] top-[10%] w-[80vh] h-[80vh] rounded-full border-[60px] border-blue-900/20 blur-sm animate-spin-slow pointer-events-none"
-        style={{ animationDuration: "60s" }}
-      ></div>
-      <div className="absolute right-[-5%] top-[15%] w-[60vh] h-[60vh] rounded-full border-[40px] border-blue-800/10 blur-md pointer-events-none"></div>
-      <div className="absolute right-[0%] top-[25%] w-[40vh] h-[40vh] rounded-full border-[20px] border-blue-600/5 blur-xl pointer-events-none"></div>
-
+    <div className="min-h-screen w-full bg-background text-foreground flex flex-col items-center justify-center relative overflow-hidden font-sans transition-colors duration-500">
       {/* Hidden Input for RFID Reader */}
       <Input
         ref={rfidInputRef}
@@ -208,14 +246,12 @@ export default function Kiosk() {
         autoFocus
       />
 
-      {/* CHANGED: Main Content Container */}
-      <div className="w-full max-w-6xl h-[85vh] bg-[#111] rounded-[1rem] shadow-2xl flex flex-col relative overflow-hidden border border-white/5">
-        {/* Header Bar */}
-        <div className="flex justify-between items-start px-12 py-10 z-10">
-          {/* Time & Weather Section */}
-          <div className="flex flex-col gap-1">
-            <h1 className="text-6xl font-light tracking-tight text-white/90 tabular-nums">
-              {/* CHANGED: Added seconds to time display */}
+      {/* Main Container */}
+      <div className="w-full max-w-5xl h-[85vh] bg-card border border-border rounded-3xl shadow-xl flex flex-col relative overflow-hidden">
+        {/* Header: Minimal & Clean */}
+        <div className="flex justify-between items-start px-10 py-8 z-10">
+          <div>
+            <h1 className="text-5xl font-thin tracking-tighter tabular-nums">
               {currentTime.toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -223,70 +259,56 @@ export default function Kiosk() {
                 hour12: false,
               })}
             </h1>
-            <div className="flex items-center gap-4 text-zinc-500 font-medium ml-1 mt-2">
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-blue-500" />
-                <span>Makati, Metro Manila</span>
-              </div>
-              <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
-              <div className="flex items-center gap-2">
-                <CloudSun className="w-4 h-4 text-yellow-500/80" />
-                <span>28°C</span>
-              </div>
+            <div className="flex items-center gap-3 text-muted-foreground mt-2 text-sm">
+              <span className="flex items-center gap-1.5 uppercase tracking-wider font-medium text-xs">
+                <MapPin className="w-3 h-3" /> Makati
+              </span>
+              <span className="text-border">|</span>
+              <span className="flex items-center gap-1.5 font-light">
+                <CloudSun className="w-3 h-3" /> {temperature}
+              </span>
+              <span className="text-border">|</span>
+              <span className="uppercase tracking-widest text-xs font-medium">
+                {currentTime.toLocaleDateString([], {
+                  weekday: "short",
+                  day: "numeric",
+                  month: "short",
+                })}
+              </span>
             </div>
-            <span className="text-zinc-600 font-medium ml-1 text-sm uppercase tracking-widest mt-1">
-              {currentTime.toLocaleDateString([], {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </span>
           </div>
 
-          {/* CHANGED: Logo Right - Using Image + Name */}
-          <div className="flex flex-col items-end gap-3">
-            {/* Replaced generic div with image. Ensure 'favicon.png.jpeg' is accessible in your public folder or adjust path */}
-            <div className="w-16 h-16 rounded-xl overflow-hidden bg-white/5 border border-white/10 p-1">
-              {/* Note: Update the src below to the exact path where you stored the uploaded image */}
+          <div className="flex flex-col items-end gap-2">
+            <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center overflow-hidden border border-border">
               <img
                 src="/favicon.png"
                 alt="Logo"
-                className="w-full h-full object-contain"
+                className="w-8 h-8 object-contain opacity-80"
               />
             </div>
-            <span className="text-lg font-thin tracking-wide text-zinc-400">
-              {buildingName}
-            </span>
           </div>
         </div>
 
         {/* Dynamic Content Area */}
-        <div className="flex-1 flex flex-col justify-center px-12 pb-12 z-10 transition-all duration-500 ease-in-out">
+        <div className="flex-1 flex flex-col justify-center px-10 z-10">
           {/* STATE: IDLE */}
           {viewState.status === "idle" && (
-            <div className="animate-in fade-in slide-in-from-left-4 duration-500 space-y-10 max-w-xl">
-              <div className="space-y-4">
-                <p className="text-zinc-400 text-2xl font-light">Welcome To</p>
-                <h2 className="text-7xl font-thin text-white tracking-tight">
-                  SG Webworks<span className="text-blue-600">.</span>
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-700 flex flex-col items-center text-center space-y-8">
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm uppercase tracking-[0.2em]">
+                  Welcome to
+                </p>
+                <h2 className="text-6xl font-thin tracking-tight">
+                  {buildingName}
                 </h2>
               </div>
 
-              {/* CHANGED: Combined Check-in/out Pill */}
-              <div className="h-20 w-64 rounded-full border border-zinc-700 bg-zinc-800/30 backdrop-blur-sm flex items-center justify-between px-3 pl-8 shadow-inner">
-                <span className="text-zinc-300 font-medium text-lg">
-                  Check-In / Out
-                </span>
-                <div className="h-14 w-14 rounded-full bg-blue-600 shadow-lg shadow-blue-900/50 flex items-center justify-center animate-pulse">
-                  <ArrowRightLeft className="text-white w-6 h-6" />
-                </div>
-              </div>
+              <div className="w-full max-w-xs h-px bg-border my-4" />
 
-              <div className="pt-4 flex items-center gap-4 opacity-40">
-                <QrCode className="w-6 h-6 text-zinc-500" />
-                <p className="text-sm text-zinc-500 uppercase tracking-wider">
-                  Tap Card or Scan QR Code
+              <div className="flex flex-col items-center gap-3 opacity-60 animate-pulse">
+                <QrCode className="w-8 h-8 stroke-[1]" />
+                <p className="text-xs uppercase tracking-widest text-muted-foreground font-medium">
+                  Tap Card to Enter
                 </p>
               </div>
             </div>
@@ -294,92 +316,77 @@ export default function Kiosk() {
 
           {/* STATE: PROCESSING */}
           {viewState.status === "processing" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-50">
-              <div className="w-20 h-20 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mb-6"></div>
-              <p className="text-2xl text-zinc-300 font-light tracking-wide">
-                Verifying Access...
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+              <Loader2 className="w-12 h-12 animate-spin text-primary stroke-[1]" />
+              <p className="mt-6 text-lg font-light tracking-wide text-muted-foreground">
+                Verifying...
               </p>
             </div>
           )}
 
-          {/* STATE: SUCCESS (The result card) */}
+          {/* STATE: SUCCESS */}
           {viewState.status === "success" && viewState.person && (
-            <div className="w-full flex items-center justify-center animate-in zoom-in-95 duration-300">
-              <Card className="w-full max-w-4xl bg-[#1a1a1a] border-none shadow-2xl relative overflow-hidden rounded-[2.5rem]">
-                {/* Blue/Orange accent strip based on action */}
-                <div
-                  className={`absolute top-0 left-0 w-3 h-full ${
-                    viewState.isCheckOut ? "bg-orange-500" : "bg-blue-600"
-                  }`}
-                ></div>
-
-                <CardContent className="p-12 flex items-center gap-12">
-                  {/* Avatar / Image */}
-                  <div className="relative">
-                    <div className="w-48 h-48 rounded-full overflow-hidden border-8 border-[#252525] shadow-2xl bg-zinc-800 flex items-center justify-center">
-                      <User className="w-24 h-24 text-zinc-600" />
-                    </div>
-                    {/* Status Badge */}
+            <div className="w-full flex items-center justify-center animate-in zoom-in-95 duration-500">
+              <Card className="w-full max-w-2xl border-0 shadow-none bg-transparent">
+                <CardContent className="p-0 flex flex-col items-center text-center">
+                  {/* Status Ring */}
+                  <div
+                    className={`mb-8 p-1 rounded-full border-2 ${
+                      viewState.isCheckOut
+                        ? "border-orange-500/20"
+                        : "border-primary/20"
+                    }`}
+                  >
                     <div
-                      className={`absolute bottom-2 right-2 p-4 rounded-full border-8 border-[#1a1a1a] ${
-                        viewState.isCheckOut ? "bg-orange-500" : "bg-blue-600"
+                      className={`w-32 h-32 rounded-full flex items-center justify-center shadow-sm ${
+                        viewState.isCheckOut
+                          ? "bg-orange-50 text-orange-600 dark:bg-orange-950/30 dark:text-orange-400"
+                          : "bg-primary/10 text-primary"
                       }`}
                     >
                       {viewState.isCheckOut ? (
-                        <ArrowRightLeft className="w-8 h-8 text-white" />
+                        <ArrowLeft className="w-12 h-12 stroke-[1.5]" />
                       ) : (
-                        <CheckCircle2 className="w-8 h-8 text-white" />
+                        <Check className="w-12 h-12 stroke-[1.5]" />
                       )}
                     </div>
                   </div>
 
-                  {/* Info */}
-                  <div className="flex-1 space-y-6">
-                    <div>
-                      <h3 className="text-zinc-500 text-sm font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                        {viewState.person.personType}
-                      </h3>
-                      <h2 className="text-5xl font-bold text-white mb-2 tracking-tight">
-                        {viewState.person.name}
-                      </h2>
-                      <p
-                        className={`text-2xl font-medium ${
-                          viewState.isCheckOut
-                            ? "text-orange-400"
-                            : "text-blue-400"
-                        }`}
-                      >
-                        {viewState.message}
-                      </p>
-                    </div>
+                  <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground mb-2">
+                    {viewState.person.personType}
+                  </h3>
+                  <h2 className="text-5xl font-light tracking-tight mb-2">
+                    {viewState.person.name}
+                  </h2>
+                  <p
+                    className={`text-xl font-light mb-10 ${
+                      viewState.isCheckOut ? "text-orange-500" : "text-primary"
+                    }`}
+                  >
+                    {viewState.message}
+                  </p>
 
-                    {/* Time Grid */}
-                    <div className="grid grid-cols-2 gap-6 mt-8 bg-[#111] p-6 rounded-2xl border border-white/5">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
-                          Time In
-                        </span>
-                        <span className="text-2xl font-mono text-white tracking-tight">
-                          {formatTime(viewState.person.entryTime || new Date())}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-1 border-l border-white/5 pl-6">
-                        <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
-                          Time Out
-                        </span>
-                        <span
-                          className={`text-2xl font-mono ${
-                            viewState.isCheckOut
-                              ? "text-white"
-                              : "text-zinc-700"
-                          }`}
-                        >
-                          {viewState.isCheckOut
-                            ? formatTime(new Date())
-                            : "--:--:--"}
-                        </span>
-                      </div>
+                  {/* Minimal Time Grid */}
+                  <div className="grid grid-cols-2 gap-12 w-full max-w-md border-t border-border pt-1">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        In
+                      </span>
+                      <span className="text-2xl font-light tabular-nums">
+                        {formatTime(viewState.person.entryTime || new Date())}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        Out
+                      </span>
+                      <span
+                        className={`text-2xl font-light tabular-nums ${viewState.isCheckOut ? "text-foreground" : "text-muted-foreground/30"}`}
+                      >
+                        {viewState.isCheckOut
+                          ? formatTime(viewState.person.exitTime)
+                          : "--:--:--"}
+                      </span>
                     </div>
                   </div>
                 </CardContent>
@@ -390,19 +397,19 @@ export default function Kiosk() {
           {/* STATE: ERROR */}
           {viewState.status === "error" && (
             <div className="w-full flex items-center justify-center animate-in shake duration-300">
-              <div className="bg-red-500/10 border border-red-500/20 rounded-3xl p-10 text-center max-w-lg backdrop-blur-md">
-                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <User className="w-8 h-8 text-red-500" />
+              <div className="flex flex-col items-center text-center max-w-md">
+                <div className="w-20 h-20 bg-destructive/5 rounded-full flex items-center justify-center mb-6">
+                  <AlertCircle className="w-8 h-8 text-destructive stroke-[1.5]" />
                 </div>
-                <h2 className="text-3xl font-bold text-red-400 mb-2">
-                  Access Denied
+                <h2 className="text-3xl font-light text-foreground mb-2">
+                  Not Recognized
                 </h2>
-                <p className="text-xl text-zinc-300 font-light">
+                <p className="text-muted-foreground font-light text-lg mb-8">
                   {viewState.message}
                 </p>
-                <div className="mt-8 pt-6 border-t border-red-500/10">
-                  <p className="text-sm text-zinc-500 uppercase tracking-widest">
-                    Please contact security
+                <div className="px-4 py-2 bg-muted/50 rounded-full">
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium">
+                    Please see reception
                   </p>
                 </div>
               </div>
@@ -410,12 +417,10 @@ export default function Kiosk() {
           )}
         </div>
 
-        {/* Footer - Simplified based on request */}
-        <div className="px-12 py-8 flex justify-center items-center border-t border-white/5 bg-[#151515]">
-          <p className="text-xs text-zinc-600 tracking-widest uppercase">
-            Powered by{" "}
-            <span className="text-zinc-400 font-bold ml-1">{buildingName}</span>{" "}
-            • Secure Access System
+        {/* Footer */}
+        <div className="px-10 py-6 flex justify-center border-t border-border bg-muted/20">
+          <p className="text-[10px] text-muted-foreground tracking-[0.2em] uppercase">
+            Secure Access • {buildingName}
           </p>
         </div>
       </div>

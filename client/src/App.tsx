@@ -16,6 +16,7 @@ import Reports from "@/pages/admin/Reports";
 import About from "@/pages/About";
 import Dashboard from "@/pages/Dashboard";
 import Gallery from "@/pages/admin/Gallery";
+import EmployeeGallery from "@/pages/admin/EmployeeGallery";
 import Analytics from "@/pages/admin/Analytics";
 import PreRegistration from "@/pages/admin/PreRegistration";
 import VisitorApproval from "@/pages/VisitorApproval";
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/admin/reports" component={Reports} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/admin/gallery" component={Gallery} />
+      <Route path="/admin/employee-gallery" component={EmployeeGallery} />
       <Route path="/admin/analytics" component={Analytics} />
       <Route path="/admin/pre-registration" component={PreRegistration} />
       <Route path="/about" component={About} />

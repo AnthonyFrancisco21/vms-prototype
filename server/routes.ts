@@ -197,6 +197,16 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/employees/active", async (req, res) => {
+    try {
+      const employees = await storage.getActiveEmployees();
+      res.json(employees);
+    } catch (error) {
+      console.error("Error fetching active employees:", error);
+      res.status(500).json({ error: "Failed to fetch active employees" });
+    }
+  });
+
   app.get("/api/visitors/:id", async (req, res) => {
     try {
       const visitor = await storage.getVisitor(req.params.id);
@@ -462,14 +472,17 @@ export async function registerRoutes(
 
       const { rfid } = parsed.data;
 
-      // First try employees
-      let updatedEmployee = await storage.checkInEmployeeByRfid(rfid);
-      if (!updatedEmployee) {
-        updatedEmployee = await storage.checkOutEmployeeByRfid(rfid);
-      }
-
-      if (updatedEmployee) {
-        return res.json(updatedEmployee);
+      // First try employees - process attendance (time in/out toggle)
+      const employeeResult = await storage.processEmployeeAttendance(rfid);
+      if (employeeResult) {
+        // Return employee with attendance info for display
+        const employeeWithAttendance = {
+          ...employeeResult.employee,
+          entryTime: employeeResult.log.timeIn,
+          exitTime: employeeResult.log.timeOut,
+          isCheckIn: !employeeResult.log.timeOut, // true if time in, false if time out
+        } as any;
+        return res.json(employeeWithAttendance);
       }
 
       // Then try visitors
@@ -489,6 +502,19 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error processing kiosk request:", error);
       res.status(500).json({ error: "Failed to process kiosk request" });
+    }
+  });
+
+  app.delete("/api/visitors/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteVisitor(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Visitor not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting visitor:", error);
+      res.status(500).json({ error: "Failed to delete visitor" });
     }
   });
 
@@ -935,8 +961,6 @@ export async function registerRoutes(
         ...parsed.data,
         idScanImage,
         photoImage,
-        status: "registered",
-        entryTime: null,
       });
 
       console.log("Employee created successfully with ID:", employee.id);
@@ -975,6 +999,16 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting employee:", error);
       res.status(500).json({ error: "Failed to delete employee" });
+    }
+  });
+
+  app.get("/api/employees/:id/attendance", async (req, res) => {
+    try {
+      const attendanceLogs = await storage.getAttendanceLogs(req.params.id);
+      res.json(attendanceLogs);
+    } catch (error) {
+      console.error("Error fetching employee attendance:", error);
+      res.status(500).json({ error: "Failed to fetch employee attendance" });
     }
   });
 

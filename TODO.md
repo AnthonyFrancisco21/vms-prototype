@@ -1,13 +1,11 @@
-# Fix Visitor Registration Flow
-
-## Issues Identified
-
-- Step 3 ("Take Photo") renders ID scan instead of photo capture
-- Step 4 ("Scan RFID") renders photo capture instead of RFID input
-- Confirmation step incorrectly set to step 6 instead of step 5
+# Employee Attendance System Implementation
 
 ## Tasks
 
-- [ ] Swap render logic for visitor steps 3 and 4
-- [ ] Update confirmation step from 6 to 5
-- [ ] Test registration flow after changes
+- [ ] Update shared/schema.ts: Redesign employees table and add attendance_logs table
+- [ ] Update server/storage.ts: Modify employee methods and add attendance log methods
+- [ ] Update server/routes.ts: Update employee endpoints and kiosk logic
+- [ ] Update client/src/pages/Kiosk.tsx: Ensure correct attendance display
+- [ ] Generate and run database migrations
+- [ ] Test kiosk functionality for employees and visitors
+- [ ] Verify attendance logging works correctly

@@ -3,7 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Visitor } from "@shared/schema";
+import type { Visitor, Employee } from "@shared/schema";
+
+type PersonInBuilding =
+  | (Visitor & { personType: "visitor" })
+  | (Employee & {
+      entryTime: Date;
+      personType: "employee";
+      destinationName: string;
+    });
 import {
   Users,
   Building2,
@@ -22,13 +30,37 @@ export default function Dashboard() {
 
   const {
     data: activeVisitors = [],
-    isLoading,
-    refetch,
-    isFetching,
+    isLoading: isLoadingVisitors,
+    refetch: refetchVisitors,
+    isFetching: isFetchingVisitors,
   } = useQuery<Visitor[]>({
     queryKey: ["/api/visitors/active"],
     refetchInterval: 30000,
   });
+
+  const {
+    data: activeEmployees = [],
+    isLoading: isLoadingEmployees,
+    refetch: refetchEmployees,
+    isFetching: isFetchingEmployees,
+  } = useQuery<Employee[]>({
+    queryKey: ["/api/employees/active"],
+    refetchInterval: 30000,
+  });
+
+  const isLoading = isLoadingVisitors || isLoadingEmployees;
+  const isFetching = isFetchingVisitors || isFetchingEmployees;
+
+  // Combine visitors and employees into people in building
+  const peopleInBuilding = [
+    ...activeVisitors.map((v) => ({ ...v, personType: "visitor" as const })),
+    ...activeEmployees.map((e) => ({
+      ...e,
+      personType: "employee" as const,
+      destinationName: "N/A",
+      entryTime: new Date(),
+    })),
+  ];
 
   useEffect(() => {
     if (!isFetching) {
@@ -37,7 +69,8 @@ export default function Dashboard() {
   }, [isFetching]);
 
   const handleRefresh = () => {
-    refetch();
+    refetchVisitors();
+    refetchEmployees();
   };
 
   const getTimeInBuilding = (entryTime: Date | null) => {
@@ -64,7 +97,11 @@ export default function Dashboard() {
   };
 
   const uniqueDestinations = [
-    ...new Set(activeVisitors.map((v) => v.destinationName)),
+    ...new Set(
+      peopleInBuilding
+        .filter((p) => p.personType === "visitor")
+        .map((p) => p.destinationName),
+    ),
   ].filter(Boolean);
 
   return (
@@ -103,13 +140,13 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Current Visitors
+                    Current People
                   </p>
                   <p
                     className="text-3xl font-bold"
                     data-testid="text-visitor-count"
                   >
-                    {isLoading ? "-" : activeVisitors.length}
+                    {isLoading ? "-" : peopleInBuilding.length}
                   </p>
                 </div>
               </div>
@@ -163,7 +200,7 @@ export default function Dashboard() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
-              Current Visitors in Building
+              Current People in Building
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -183,72 +220,94 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-            ) : activeVisitors.length === 0 ? (
+            ) : peopleInBuilding.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p className="text-lg font-medium">
-                  No visitors currently in building
+                  No one currently in building
                 </p>
                 <p className="text-sm">
-                  Visitors will appear here when they check in
+                  People will appear here when they check in
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {activeVisitors
-                  .filter((visitor) => visitor.entryTime)
-                  .map((visitor) => (
-                    <div
-                      key={visitor.id}
-                      className="flex items-center gap-4 p-4 bg-muted rounded-lg"
-                      data-testid={`visitor-card-${visitor.id}`}
-                    >
-                      <Avatar className="h-12 w-12">
-                        {visitor.photoImage ? (
-                          <AvatarImage
-                            src={visitor.photoImage}
-                            alt={visitor.name}
-                          />
-                        ) : null}
-                        <AvatarFallback>
-                          {getInitials(visitor.name)}
-                        </AvatarFallback>
-                      </Avatar>
+                {peopleInBuilding
+                  .filter((person) => person.entryTime)
+                  .map((person) => {
+                    const isVisitor = person.personType === "visitor";
+                    return (
+                      <div
+                        key={person.id}
+                        className="flex items-center gap-4 p-4 bg-muted rounded-lg"
+                        data-testid={`person-card-${person.id}`}
+                      >
+                        <Avatar className="h-12 w-12">
+                          {person.photoImage ? (
+                            <AvatarImage
+                              src={person.photoImage}
+                              alt={person.name}
+                            />
+                          ) : null}
+                          <AvatarFallback>
+                            {getInitials(person.name)}
+                          </AvatarFallback>
+                        </Avatar>
 
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className="font-medium truncate"
-                          data-testid="text-visitor-name"
-                        >
-                          {visitor.name}
-                        </p>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />
-                            {visitor.destinationName}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Target className="h-3 w-3" />
-                            {visitor.personToVisit}
-                          </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p
+                              className="font-medium truncate"
+                              data-testid="text-person-name"
+                            >
+                              {person.name}
+                            </p>
+                            <Badge variant="outline" className="text-xs">
+                              {isVisitor ? "Visitor" : "Employee"}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            {isVisitor ? (
+                              <>
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="h-3 w-3" />
+                                  {person.destinationName}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <Target className="h-3 w-3" />
+                                  {person.personToVisit}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <Users className="h-3 w-3" />
+                                Employee
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <Badge variant="secondary" className="gap-1">
+                            <Timer className="h-3 w-3" />
+                            {getTimeInBuilding(person.entryTime)}
+                          </Badge>
+                          {person.entryTime && (
+                            <Badge variant="outline" className="gap-1">
+                              <Clock className="h-3 w-3" />
+                              {new Date(person.entryTime).toLocaleTimeString(
+                                [],
+                                {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                },
+                              )}
+                            </Badge>
+                          )}
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-3">
-                        <Badge variant="secondary" className="gap-1">
-                          <Timer className="h-3 w-3" />
-                          {getTimeInBuilding(visitor.entryTime)}
-                        </Badge>
-                        <Badge variant="outline" className="gap-1">
-                          <Clock className="h-3 w-3" />
-                          {new Date(visitor.entryTime!).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             )}
           </CardContent>
@@ -259,14 +318,14 @@ export default function Dashboard() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <MapPin className="h-5 w-5" />
-                Visitors by Destination
+                People by Destination
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {uniqueDestinations.map((dest) => {
-                  const count = activeVisitors.filter(
-                    (v) => v.destinationName === dest,
+                  const count = peopleInBuilding.filter(
+                    (p) => p.destinationName === dest,
                   ).length;
                   return (
                     <div
